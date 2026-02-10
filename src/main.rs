@@ -13,7 +13,6 @@ use nix::{
 	sys::epoll::{Epoll, EpollCreateFlags, EpollEvent, EpollFlags},
 };
 
-const KEYBOARD_BACKLIGHT_DIR: &str = "/sys/class/leds/kbd_backlight";
 const MIN_FADE_TICK_MS: u64 = 16; // 60Hz should be plenty fast
 
 #[derive(Parser)]
@@ -77,6 +76,35 @@ fn get_all_input_devices() -> std::io::Result<Vec<PathBuf>> {
 	Ok(devices)
 }
 
+fn find_keyboard_backlight_dir() -> std::io::Result<PathBuf> {
+	let base = Path::new("/sys/class/leds");
+	let mut matches: Vec<PathBuf> = Vec::new();
+
+	for entry in std::fs::read_dir(base)? {
+		let entry = entry?;
+		let path = entry.path();
+		if !path.is_dir() {
+			continue;
+		}
+
+		if entry
+			.file_name()
+			.to_string_lossy()
+			.ends_with("kbd_backlight")
+		{
+			matches.push(path);
+		}
+	}
+
+	match matches.len() {
+		0 => Err(std::io::Error::new(
+			std::io::ErrorKind::NotFound,
+			"No LED ending with 'kbd_backlight' found under /sys/class/leds",
+		)),
+		_ => Ok(matches.remove(0)),
+	}
+}
+
 struct Backlight {
 	brightness_path: PathBuf,
 	max_raw: u32,
@@ -85,7 +113,7 @@ struct Backlight {
 
 impl Backlight {
 	fn open() -> std::io::Result<Self> {
-		let dir = Path::new(KEYBOARD_BACKLIGHT_DIR);
+		let dir = find_keyboard_backlight_dir()?;
 		let brightness_path = dir.join("brightness");
 		let max_path = dir.join("max_brightness");
 
