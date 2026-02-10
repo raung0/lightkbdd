@@ -12,6 +12,7 @@
 
   outputs =
     {
+      self,
       nixpkgs,
       flake-utils,
       fenix,
@@ -40,6 +41,12 @@
     in
     {
       overlays.default = overlay;
+
+      nixosModules = rec {
+        kbdd = import ./nix/module.nix;
+        default = kbdd;
+      };
+
     }
     // flake-utils.lib.eachDefaultSystem (
       system:
