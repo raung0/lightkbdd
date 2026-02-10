@@ -17,6 +17,7 @@ Options:
   -i, --idle <IDLE_MS>          Keyboard idle time in milliseconds [default: 10000]
   -O, --fade-out <FADE_OUT_MS>  Keyboard fade out time in milliseconds [default: 800]
   -I, --fade-in <FADE_IN_MS>    Keyboard fade in time in milliseconds [default: 250]
+  -v, --verbose
   -h, --help                    Print help
 ```
 
