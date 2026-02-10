@@ -1,30 +1,30 @@
 { lib, config, pkgs, ... }:
 let
-  cfg = config.services.kbdd;
+  cfg = config.services.lightkbdd;
 in
 {
-  options.services.kbdd = {
-    enable = lib.mkEnableOption "kbdd keyboard backlight daemon";
+  options.services.lightkbdd = {
+    enable = lib.mkEnableOption "lightkbdd keyboard backlight daemon";
 
     package = lib.mkOption {
       type = lib.types.package;
-      default = pkgs.kbdd;
-      defaultText = "pkgs.kbdd";
-      description = "The kbdd package to run.";
+      default = pkgs.lightkbdd;
+      defaultText = "pkgs.lightkbdd";
+      description = "The lightkbdd package to run.";
     };
 
     extraArgs = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [];
-      description = "Extra args passed to kbdd.";
+      description = "Extra args passed to lightkbdd.";
     };
   };
 
   config = lib.mkIf cfg.enable {
     environment.systemPackages = [ cfg.package ];
 
-    systemd.services.kbdd = {
-      description = "kbdd keyboard backlight daemon";
+    systemd.services.lightkbdd = {
+      description = "lightkbdd keyboard backlight daemon";
       wantedBy = [ "multi-user.target" ];
       after = [ "network.target" ];
 

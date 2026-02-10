@@ -25,6 +25,7 @@
           fenixPkgs = fenix.packages.${final.stdenv.hostPlatform.system};
         in
         {
+          lightkbdd = self.packages.${final.stdenv.hostPlatform.system}.lightkbdd;
           rustToolchain =
             with fenixPkgs;
             combine (
@@ -43,8 +44,8 @@
       overlays.default = overlay;
 
       nixosModules = rec {
-        kbdd = import ./nix/module.nix;
-        default = kbdd;
+        lightkbdd = import ./nix/module.nix;
+        default = lightkbdd;
       };
 
     }
@@ -58,8 +59,8 @@
       in
       {
         packages = rec {
-          kbdd = pkgs.rustPlatform.buildRustPackage {
-            pname = "kbdd";
+          lightkbdd = pkgs.rustPlatform.buildRustPackage {
+            pname = "lightkbdd";
             version = "0.1.0";
 
             src = ./.;
@@ -70,12 +71,12 @@
 
             meta = {
               description = "Keyboard backlight daemon";
-              homepage = "https://github.com/raung0/kbdd";
+              homepage = "https://github.com/raung0/lightkbdd";
               license = pkgs.lib.licenses.gpl3;
-              mainProgram = "kbdd";
+              mainProgram = "lightkbdd";
             };
           };
-          default = kbdd;
+          default = lightkbdd;
         };
 
         devShells.default = pkgs.mkShell {
