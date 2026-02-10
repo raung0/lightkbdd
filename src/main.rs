@@ -17,7 +17,7 @@ use nix::{
 	sys::epoll::{Epoll, EpollCreateFlags, EpollEvent, EpollFlags},
 };
 
-const KEYBOARD_BACKLIGHT_PATH: &'static str = "/sys/class/leds/kbd_backlight/";
+const KEYBOARD_BACKLIGHT_PATH: &str = "/sys/class/leds/kbd_backlight/";
 
 #[derive(Parser)]
 struct Options {
@@ -46,9 +46,9 @@ struct Options {
 
 fn read_int(path: &Path) -> std::io::Result<u32> {
 	let s = std::fs::read_to_string(path)?;
-	Ok(s.trim()
+	s.trim()
 		.parse::<u32>()
-		.map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?)
+		.map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
 }
 
 fn write_int(path: &Path, v: u32) -> std::io::Result<()> {
@@ -87,17 +87,11 @@ fn get_all_input_devices() -> std::io::Result<Vec<PathBuf>> {
 }
 
 fn to_io_err(e: nix::Error) -> std::io::Error {
-	std::io::Error::new(std::io::ErrorKind::Other, e)
+	std::io::Error::other(e)
 }
 
 fn clamp01(x: f32) -> f32 {
-	if x < 0.0 {
-		0.0
-	} else if x > 1.0 {
-		1.0
-	} else {
-		x
-	}
+	x.clamp(0.0, 1.0)
 }
 
 struct Fader {
@@ -118,8 +112,8 @@ impl Fader {
 			target: clamp01(current),
 			last_raw_written: None,
 			last_tick_ms: now_ms,
-			fade_in_ms: fade_in_ms,
-			fade_out_ms: fade_out_ms,
+			fade_in_ms,
+			fade_out_ms,
 		}
 	}
 
