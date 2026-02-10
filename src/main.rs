@@ -10,6 +10,7 @@ use std::{
 };
 
 use chrono::Utc;
+use clap::Parser;
 use nix::{
 	fcntl::{fcntl, FcntlArg, OFlag},
 	poll::PollTimeout,
@@ -18,9 +19,30 @@ use nix::{
 
 const KEYBOARD_BACKLIGHT_PATH: &'static str = "/sys/class/leds/kbd_backlight/";
 
-const IDLE_MS: i64 = 10_000;
-const FADE_OUT_MS: i64 = 800;
-const FADE_IN_MS: i64 = 250;
+#[derive(Parser)]
+struct Options {
+	#[arg(
+		short = 'i',
+		long = "idle",
+		help = "Keyboard idle time in milliseconds",
+		default_value_t = 10_000
+	)]
+	idle_ms: u64,
+	#[arg(
+		short = 'O',
+		long = "fade-out",
+		help = "Keyboard fade out time in milliseconds",
+		default_value_t = 800
+	)]
+	fade_out_ms: u64,
+	#[arg(
+		short = 'I',
+		long = "fade-in",
+		help = "Keyboard fade in time in milliseconds",
+		default_value_t = 250
+	)]
+	fade_in_ms: u64,
+}
 
 fn read_int(path: &Path) -> std::io::Result<u32> {
 	let s = std::fs::read_to_string(path)?;
@@ -89,15 +111,15 @@ struct Fader {
 }
 
 impl Fader {
-	fn new(max_raw: u32, current: f32, now_ms: i64) -> Self {
+	fn new(max_raw: u32, current: f32, now_ms: i64, fade_in_ms: i64, fade_out_ms: i64) -> Self {
 		Self {
 			max_raw,
 			current: clamp01(current),
 			target: clamp01(current),
 			last_raw_written: None,
 			last_tick_ms: now_ms,
-			fade_in_ms: FADE_IN_MS,
-			fade_out_ms: FADE_OUT_MS,
+			fade_in_ms: fade_in_ms,
+			fade_out_ms: fade_out_ms,
 		}
 	}
 
@@ -147,6 +169,8 @@ impl Fader {
 }
 
 fn main() -> std::io::Result<()> {
+	let options = Options::parse();
+
 	let paths = get_all_input_devices()?;
 
 	let ep = Epoll::new(EpollCreateFlags::empty()).map_err(to_io_err)?;
@@ -177,7 +201,13 @@ fn main() -> std::io::Result<()> {
 	let now_ms = Utc::now().timestamp_millis();
 	let max_raw = get_raw_backlight_max_value()?;
 	let initial = get_backlight_value()?;
-	let mut fader = Fader::new(max_raw, initial, now_ms);
+	let mut fader = Fader::new(
+		max_raw,
+		initial,
+		now_ms,
+		options.fade_in_ms as i64,
+		options.fade_out_ms as i64,
+	);
 
 	let mut last_key_event = now_ms;
 	let mut saved_brightness: Option<f32> = None;
@@ -191,7 +221,7 @@ fn main() -> std::io::Result<()> {
 		let now = Utc::now().timestamp_millis();
 
 		let diff = now - last_key_event;
-		if diff > IDLE_MS && !is_dimmed {
+		if diff > options.idle_ms as i64 && !is_dimmed {
 			if saved_brightness.is_none() {
 				saved_brightness = Some(fader.current.max(0.01));
 			}

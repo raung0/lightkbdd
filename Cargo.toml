@@ -5,4 +5,5 @@ edition = "2024"
 
 [dependencies]
 chrono = { version = "0.4.43", default-features = false, features = ["std", "now"] }
+clap = { version = "4.5.57", features = ["derive"] }
 nix = { version = "0.31.1", features = ["event", "fs"] }
