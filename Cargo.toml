@@ -1,0 +1,8 @@
+[package]
+name = "kbdd"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+chrono = { version = "0.4.43", default-features = false, features = ["std", "now"] }
+nix = { version = "0.31.1", features = ["event", "fs"] }

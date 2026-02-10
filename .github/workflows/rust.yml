@@ -1,0 +1,19 @@
+name: Rust
+
+on: [push, pull_request]
+
+jobs:
+    check:
+        name: Check
+        runs-on: ubuntu-latest
+        steps:
+            - name: Setup | Checkout
+              uses: actions/checkout@v2
+
+            - name: Setup | Toolchain
+              uses: dtolnay/rust-toolchain@master
+              with:
+                  profile: minimal
+                  toolchain: nightly
+                  components: rust-src
+
