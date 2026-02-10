@@ -21,7 +21,7 @@
       overlay =
         final: prev:
         let
-          fenixPkgs = fenix.packages.${final.system};
+          fenixPkgs = fenix.packages.${final.stdenv.hostPlatform.system};
         in
         {
           rustToolchain =
@@ -50,6 +50,27 @@
         };
       in
       {
+        packages = rec {
+          kbdd = pkgs.rustPlatform.buildRustPackage {
+            pname = "kbdd";
+            version = "0.1.0";
+
+            src = ./.;
+
+            cargoLock.lockFile = ./Cargo.lock;
+
+            enableParallelBuild = true;
+
+            meta = {
+              description = "Keyboard backlight daemon";
+              homepage = "https://github.com/raung0/kbdd";
+              license = pkgs.lib.licenses.gpl3;
+              mainProgram = "kbdd";
+            };
+          };
+          default = kbdd;
+        };
+
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
             rustToolchain
