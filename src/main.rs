@@ -136,7 +136,6 @@ impl Backlight {
 		}
 		self.last_raw_written = Some(raw);
 
-		// sysfs: no truncate/seek, just write the value
 		std::fs::write(&self.brightness_path, format!("{raw}\n"))
 	}
 
@@ -314,17 +313,6 @@ fn main() -> std::io::Result<()> {
 
 		let now = Instant::now();
 
-		if !is_dimmed && now >= idle_deadline {
-			if saved_raw.is_none() {
-				saved_raw = Some(backlight.read_raw().unwrap_or(initial_raw));
-			}
-			if options.verbose {
-				println!("Dimming keyboard");
-			}
-			fader.set_target(now, 0.0);
-			is_dimmed = true;
-		}
-
 		if n != 0 {
 			for ev in ep_events.iter().take(n) {
 				let idx = ev.data() as usize;
@@ -360,6 +348,21 @@ fn main() -> std::io::Result<()> {
 				let restore_raw = saved_raw.take().unwrap_or(initial_raw);
 				fader.set_target(now, backlight.raw_to_f32(restore_raw));
 				is_dimmed = false;
+			}
+		}
+
+		if n == 0 {
+			let idle_deadline = last_activity + Duration::from_millis(options.idle_ms);
+
+			if !is_dimmed && now >= idle_deadline {
+				if saved_raw.is_none() {
+					saved_raw = Some(backlight.read_raw().unwrap_or(initial_raw));
+				}
+				if options.verbose {
+					println!("Dimming keyboard");
+				}
+				fader.set_target(now, 0.0);
+				is_dimmed = true;
 			}
 		}
 
