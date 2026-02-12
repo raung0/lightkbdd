@@ -1,4 +1,5 @@
 use std::{
+	collections::{HashMap, HashSet},
 	fs::File,
 	io::Read,
 	os::{fd::AsFd, unix::fs::FileTypeExt},
@@ -14,6 +15,7 @@ use nix::{
 };
 
 const MIN_FADE_TICK_MS: u64 = 16; // 60Hz should be plenty fast
+const INPUT_RESCAN_MS: u64 = 2_000;
 
 #[derive(Parser)]
 struct Options {
@@ -233,6 +235,132 @@ fn ms_to_timeout(ms: i64) -> PollTimeout {
 	PollTimeout::from(capped)
 }
 
+struct InputDevice {
+	path: PathBuf,
+	file: File,
+}
+
+fn configure_nonblocking(file: &File) -> std::io::Result<()> {
+	let flags =
+		OFlag::from_bits_truncate(fcntl(file.as_fd(), FcntlArg::F_GETFL).map_err(to_io_err)?);
+	let new_flags = flags | OFlag::O_NONBLOCK;
+	fcntl(file.as_fd(), FcntlArg::F_SETFL(new_flags)).map_err(to_io_err)?;
+	Ok(())
+}
+
+fn add_input_device(
+	ep: &Epoll,
+	devices_by_id: &mut HashMap<u64, InputDevice>,
+	ids_by_path: &mut HashMap<PathBuf, u64>,
+	next_device_id: &mut u64,
+	path: PathBuf,
+	verbose: bool,
+) {
+	if ids_by_path.contains_key(&path) {
+		return;
+	}
+
+	let file = match File::open(&path) {
+		Ok(file) => file,
+		Err(e) => {
+			if verbose {
+				println!("Skipping {}: {e}", path.display());
+			}
+			return;
+		}
+	};
+
+	if let Err(e) = configure_nonblocking(&file) {
+		if verbose {
+			println!("Skipping {}: {e}", path.display());
+		}
+		return;
+	}
+
+	let device_id = *next_device_id;
+	*next_device_id = next_device_id.saturating_add(1);
+
+	if let Err(e) = ep.add(
+		&file,
+		EpollEvent::new(
+			EpollFlags::EPOLLIN | EpollFlags::EPOLLERR | EpollFlags::EPOLLHUP,
+			device_id,
+		),
+	) {
+		if verbose {
+			println!("Skipping {}: {}", path.display(), to_io_err(e));
+		}
+		return;
+	}
+
+	if verbose {
+		println!("Monitoring {}", path.display());
+	}
+
+	ids_by_path.insert(path.clone(), device_id);
+	devices_by_id.insert(device_id, InputDevice { path, file });
+}
+
+fn remove_input_device(
+	ep: &Epoll,
+	devices_by_id: &mut HashMap<u64, InputDevice>,
+	ids_by_path: &mut HashMap<PathBuf, u64>,
+	device_id: u64,
+	verbose: bool,
+	reason: &str,
+) {
+	let Some(device) = devices_by_id.remove(&device_id) else {
+		return;
+	};
+
+	ids_by_path.remove(&device.path);
+	let _ = ep.delete(&device.file);
+
+	if verbose {
+		println!("Stopped monitoring {} ({reason})", device.path.display());
+	}
+}
+
+fn rescan_input_devices(
+	ep: &Epoll,
+	devices_by_id: &mut HashMap<u64, InputDevice>,
+	ids_by_path: &mut HashMap<PathBuf, u64>,
+	next_device_id: &mut u64,
+	verbose: bool,
+) -> std::io::Result<()> {
+	let paths = get_all_input_devices()?;
+	let current_paths: HashSet<PathBuf> = paths.iter().cloned().collect();
+
+	let stale_ids: Vec<u64> = ids_by_path
+		.iter()
+		.filter_map(|(path, id)| (!current_paths.contains(path)).then_some(*id))
+		.collect();
+
+	for device_id in stale_ids {
+		remove_input_device(
+			ep,
+			devices_by_id,
+			ids_by_path,
+			device_id,
+			verbose,
+			"device disappeared",
+		);
+	}
+
+	for path in paths {
+		add_input_device(
+			ep,
+			devices_by_id,
+			ids_by_path,
+			next_device_id,
+			path,
+			verbose,
+		);
+	}
+
+	Ok(())
+}
+
 fn main() -> std::io::Result<()> {
 	let options = Options::parse();
 
@@ -246,39 +374,20 @@ fn main() -> std::io::Result<()> {
 		Duration::from_millis(options.fade_out_ms.max(1)),
 	);
 
-	let paths = get_all_input_devices()?;
 	let ep = Epoll::new(EpollCreateFlags::empty()).map_err(to_io_err)?;
+	let mut devices_by_id = HashMap::<u64, InputDevice>::new();
+	let mut ids_by_path = HashMap::<PathBuf, u64>::new();
+	let mut next_device_id = 0u64;
+	rescan_input_devices(
+		&ep,
+		&mut devices_by_id,
+		&mut ids_by_path,
+		&mut next_device_id,
+		options.verbose,
+	)?;
 
-	let mut files = Vec::<File>::new();
-	for p in paths {
-		let f = match File::open(&p) {
-			Ok(f) => f,
-			Err(_) => continue,
-		};
-
-		let flags =
-			OFlag::from_bits_truncate(fcntl(f.as_fd(), FcntlArg::F_GETFL).map_err(to_io_err)?);
-		let new_flags = flags | OFlag::O_NONBLOCK;
-		fcntl(f.as_fd(), FcntlArg::F_SETFL(new_flags)).map_err(to_io_err)?;
-
-		let idx = files.len() as u64;
-		ep.add(
-			&f,
-			EpollEvent::new(
-				EpollFlags::EPOLLIN | EpollFlags::EPOLLERR | EpollFlags::EPOLLHUP,
-				idx,
-			),
-		)
-		.map_err(to_io_err)?;
-
-		files.push(f);
-	}
-
-	if files.is_empty() {
-		return Err(std::io::Error::new(
-			std::io::ErrorKind::NotFound,
-			"No readable /dev/input/event* devices found",
-		));
+	if devices_by_id.is_empty() && options.verbose {
+		println!("No readable /dev/input/event* devices found yet; waiting for devices");
 	}
 
 	let mut ep_events = [EpollEvent::empty(); 64];
@@ -289,12 +398,24 @@ fn main() -> std::io::Result<()> {
 
 	let mut saved_raw: Option<u32> = None;
 	let mut is_dimmed = false;
+	let mut next_rescan = start;
 
 	loop {
 		let now = Instant::now();
 
+		if now >= next_rescan {
+			rescan_input_devices(
+				&ep,
+				&mut devices_by_id,
+				&mut ids_by_path,
+				&mut next_device_id,
+				options.verbose,
+			)?;
+			next_rescan = now + Duration::from_millis(INPUT_RESCAN_MS);
+		}
+
 		let idle_deadline = last_activity + Duration::from_millis(options.idle_ms);
-		let mut next_wake = idle_deadline;
+		let mut next_wake = idle_deadline.min(next_rescan);
 
 		if fader.is_fading() {
 			next_wake = next_wake.min(now + Duration::from_millis(MIN_FADE_TICK_MS));
@@ -314,29 +435,42 @@ fn main() -> std::io::Result<()> {
 		let now = Instant::now();
 
 		if n != 0 {
+			let mut failed_ids = Vec::new();
+
 			for ev in ep_events.iter().take(n) {
-				let idx = ev.data() as usize;
-				if idx >= files.len() {
+				let device_id = ev.data();
+				let Some(device) = devices_by_id.get_mut(&device_id) else {
 					continue;
-				}
+				};
 
 				let flags = ev.events();
 				if flags.contains(EpollFlags::EPOLLERR) || flags.contains(EpollFlags::EPOLLHUP) {
-					let _ = ep.delete(&files[idx]);
+					failed_ids.push(device_id);
 					continue;
 				}
 
 				loop {
-					match files[idx].read(&mut junk) {
+					match device.file.read(&mut junk) {
 						Ok(0) => break,
 						Ok(_) => continue,
 						Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
 						Err(_) => {
-							let _ = ep.delete(&files[idx]);
+							failed_ids.push(device_id);
 							break;
 						}
 					}
 				}
+			}
+
+			for device_id in failed_ids {
+				remove_input_device(
+					&ep,
+					&mut devices_by_id,
+					&mut ids_by_path,
+					device_id,
+					options.verbose,
+					"read failed",
+				);
 			}
 
 			last_activity = now;
